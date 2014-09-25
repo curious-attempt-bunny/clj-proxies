@@ -11,7 +11,9 @@
             (map enlive/text)
             (map #(re-matches proxy-regex %))
             (filter identity)
-            (map first)))
+            (map first)
+            (map #(clojure.string/split % #":"))
+            (map #(hash-map :proxy-host (first %) :proxy-port (second %)))))
 
 (defn pages
     [main-page]

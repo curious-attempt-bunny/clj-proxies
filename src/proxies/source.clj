@@ -29,10 +29,12 @@
         (concat (page-proxies main-page)
             (->>
                 (pages main-page)
-                (map fetch)
-                (map #(page-proxies %))
+                (map #(future (page-proxies (fetch %))))
+                (map deref)
                 (apply concat)))))
 
 (defn main
     []
-    (println (clojure.string/join "\n" (proxies))))
+    (let [start (System/currentTimeMillis)]
+        (proxies)
+        (println (- (System/currentTimeMillis) start))))

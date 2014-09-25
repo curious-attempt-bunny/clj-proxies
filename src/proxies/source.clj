@@ -1,5 +1,6 @@
 (ns proxies.source
-    (:require [net.cgrand.enlive-html :as enlive]))
+    (:require [net.cgrand.enlive-html :as enlive])
+    (:require [clojure.core.async :as async :refer [chan >! <!! go]]))
 
 (def proxy-regex #"^([0-9]+\.[0-9]+\.[0-9]+\.[0-9]+:[0-9]+)$")
 
@@ -25,13 +26,15 @@
 
 (defn proxies
     []
-    (let [main-page (fetch "http://www.proxy-list.org/en/index.php")]
-        (concat (page-proxies main-page)
-            (->>
-                (pages main-page)
-                (map #(future (page-proxies (fetch %))))
-                (map deref)
-                (apply concat)))))
+    (let [main-page (fetch "http://www.proxy-list.org/en/index.php")
+          sub-pages (pages main-page)
+          c         (chan (count sub-pages))
+          coll      (atom [])]
+        (doseq [page sub-pages]
+            (go (>! c (page-proxies (fetch page)))))
+        (doseq [_ sub-pages]
+            (swap! coll concat (<!! c)))
+        @coll))
 
 (defn main
     []

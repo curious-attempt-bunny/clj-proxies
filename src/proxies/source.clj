@@ -38,11 +38,13 @@
                       sub-pages (pages main-page)
                       c         (chan (count sub-pages))
                       coll      (atom [])]
+                    (go (>! c (page-proxies main-page)))
                     (doseq [page sub-pages]
                         (go (>! c (page-proxies (fetch page)))))
-                    (doseq [_ sub-pages]
+                    (dotimes [n (inc (count sub-pages))]
                         (swap! coll concat (<!! c)))
                     (ref-set proxies-list (shuffle @coll))))))
+    (prn (count @proxies-list))
     @proxies-list)
 
 (defn get-proxy

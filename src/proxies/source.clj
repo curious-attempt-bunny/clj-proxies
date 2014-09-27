@@ -3,48 +3,55 @@
     (:require [clojure.core.async :as async :refer [chan >! <!! go]])
     (:require [clj-http.client :as client]))
 
-(def proxy-regex #"^([0-9]+\.[0-9]+\.[0-9]+\.[0-9]+:[0-9]+)$")
+(def proxies-list (ref nil))
+
+(def proxy-regex #"PROXY_IP.*?([0-9]+\.[0-9]+\.[0-9]+\.[0-9]+).*?PROXY_PORT.*?([0-9]+)")
 
 (defn page-proxies
     [page]
         (->>
-            (enlive/select page [:li.proxy])
+            (enlive/select page [:script])
             (map enlive/text)
-            (map #(re-matches proxy-regex %))
-            (filter identity)
-            (map first)
-            (map #(clojure.string/split % #":"))
-            (map #(hash-map :proxy-host (first %) :proxy-port (Integer/parseInt (second %))))))
-
-(defn pages
-    [main-page]
-    (->>
-        (enlive/select main-page [:div.table-menu :a.item])
-        (map #(get-in % [:attrs :href]))
-        (map #(clojure.string/replace % #"^\." "http://www.proxy-list.org/en"))))
+            (map #(re-find proxy-regex %))
+            (remove nil?)
+            (map #(hash-map :proxy-host (second %) :proxy-port (Integer/parseInt (last %))))
+            ))
 
 (defn fetch
     [url]
     (enlive/html-resource (java.net.URL. url)))
 
-(def proxies-list (ref nil))
+(def vet-options {:conn-timeout 10000 :socket-timeout 15000 :retry-handler (fn [& _] false)})
+
+(def vet-url "https://www.google.com/")
+
+(defn vet-response
+    [p]
+    (client/get vet-url (merge vet-options p)))
+
+(defn vet-proxy
+    [p]
+    (try
+        (if (= 200 (->> p (vet-response) (:status))) p)
+        (catch Exception _ nil)))
+
+(defn vet-proxies
+    [ps]
+    (->> ps
+        (pmap vet-proxy)
+        (remove nil?)))
 
 (defn proxies
     []
     (if (nil? @proxies-list)
         (dosync
             (if (nil? @proxies-list)                
-                (let [main-page (fetch "http://www.proxy-list.org/en/index.php")
-                      sub-pages (pages main-page)
-                      c         (chan (count sub-pages))
-                      coll      (atom [])]
-                    (go (>! c (page-proxies main-page)))
-                    (doseq [page sub-pages]
-                        (go (>! c (page-proxies (fetch page)))))
-                    (dotimes [n (inc (count sub-pages))]
-                        (swap! coll concat (<!! c)))
-                    (ref-set proxies-list (shuffle @coll))))))
-    (prn (count @proxies-list))
+                (ref-set proxies-list
+                    (->> "http://gatherproxy.com/proxylist/country/?c=United%20States"
+                        (fetch)
+                        (page-proxies)
+                        (shuffle)
+                        (vet-proxies))))))
     @proxies-list)
 
 (defn get-proxy
@@ -54,11 +61,11 @@
               p  (first ps)]
             (ref-set proxies-list
                 (concat (rest ps) (list p)))
+            (prn p)
             p)))
 
 (defn- wrap-method
     [method url req]
-    (prn "wrap-method" method url req)
     (apply method (list url (merge req (get-proxy)))))
 
 (defn head    [url & [req]] (wrap-method client/head    url req))
@@ -78,5 +85,6 @@
 (defn main
     []
     (let [start (System/currentTimeMillis)]
-        (prn (get "https://www.google.com/"))
+        (prn (proxies))
+        ; (prn (get "https://www.google.com/"))
         (println (- (System/currentTimeMillis) start))))
